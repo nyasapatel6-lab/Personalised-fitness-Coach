@@ -815,9 +815,7 @@
 </main>
 
 <script>
-const API_URL = "https://api.groq.com/openai/v1/chat/completions";
-const MODEL = "llama-3.3-70b-versatile";
-const API_KEY = "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";
+const API_PROXY_URL = "/api/groq-proxy";
 
 // STATE
 let user = {};
@@ -912,32 +910,33 @@ function getUserContext() {
 }
 
 async function callAI(messages, systemPrompt) {
-  const groqMessages = [
-    { role: "system", content: systemPrompt },
-    ...messages
-  ];
-  const res = await fetch(API_URL, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': 'Bearer ' + API_KEY
-    },
-    body: JSON.stringify({
-      model: MODEL,
-      max_tokens: 1024,
-      messages: groqMessages
-    })
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    const msg = err && err.error && err.error.message ? err.error.message : 'HTTP ' + res.status;
-    throw new Error(msg);
+  try {
+    const res = await fetch(API_PROXY_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        messages: [
+          { role: 'system', content: systemPrompt },
+          ...messages
+        ]
+      })
+    });
+    
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error?.message || `HTTP ${res.status}`);
+    }
+    
+    const data = await res.json();
+    if (data.error) throw new Error(data.error.message);
+    
+    const text = data.choices?.[0]?.message?.content;
+    if (!text) throw new Error('Empty response from AI.');
+    return text;
+  } catch(e) {
+    console.error('AI Error:', e);
+    throw e;
   }
-  const data = await res.json();
-  if (data.error) throw new Error(data.error.message);
-  const text = data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content;
-  if (!text) throw new Error('Empty response from AI.');
-  return text;
 }
 
 function formatAI(text) {
@@ -999,52 +998,57 @@ function copyPlan() {
 
 // CHAT
 function initChat() {
-  addMsg('ai', `Hey ${user.name}! 👋 I'm Coach Atlas, your personal AI fitness coach. I know your profile — ${user.level} level, goals: ${user.goals.join(', ')}. Ask me anything about workouts, form, recovery, or motivation. Let's crush it! 💪`);
+  chatHistory = [];
+  document.getElementById('chatMessages').innerHTML = '';
+  addMessage('Coach Atlas', 'Hey ' + user.name + '! Ready to crush your fitness goals? Ask me anything about workouts, nutrition, or staying motivated. 💪', 'ai');
 }
 
-function addMsg(role, text) {
-  const wrap = document.getElementById('chatMessages');
-  const div = document.createElement('div');
-  div.className = `msg ${role}`;
-  div.innerHTML = `
-    <div class="msg-avatar">${role === 'ai' ? '🤖' : '👤'}</div>
-    <div class="msg-bubble">${text}</div>`;
-  wrap.appendChild(div);
-  wrap.scrollTop = wrap.scrollHeight;
+function addMessage(name, text, type) {
+  const msg = document.createElement('div');
+  msg.className = `msg ${type}`;
+  msg.innerHTML = `
+    <div class="msg-avatar">${type === 'ai' ? '🤖' : user.name[0].toUpperCase()}</div>
+    <div class="msg-bubble">${text}</div>
+  `;
+  document.getElementById('chatMessages').appendChild(msg);
+  document.getElementById('chatMessages').scrollTop = document.getElementById('chatMessages').scrollHeight;
 }
 
 function chatKeydown(e) {
-  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChat(); }
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    sendChat();
+  }
 }
 
 async function sendChat() {
   const input = document.getElementById('chatInput');
-  const msg = input.value.trim();
-  if (!msg) return;
-  const btn = document.getElementById('sendBtn');
+  const text = input.value.trim();
+  if (!text) return;
+  
+  addMessage(user.name, text, 'user');
   input.value = '';
-  btn.disabled = true;
-  addMsg('user', msg);
-  chatHistory.push({ role: 'user', content: msg });
-  const loadDiv = document.createElement('div');
-  loadDiv.className = 'msg ai';
-  loadDiv.innerHTML = `<div class="msg-avatar">🤖</div><div class="msg-bubble"><span class="loader"><span></span><span></span><span></span></span></div>`;
-  document.getElementById('chatMessages').appendChild(loadDiv);
-  document.getElementById('chatMessages').scrollTop = 99999;
+  input.style.height = '48px';
+  
+  const sendBtn = document.getElementById('sendBtn');
+  sendBtn.disabled = true;
+  sendBtn.textContent = 'Sending…';
+  
+  chatHistory.push({ role: 'user', content: text });
+  
   try {
-    const reply = await callAI(
+    const response = await callAI(
       chatHistory,
-      `You are Coach Atlas, an elite AI fitness coach. ${getUserContext()}\n\nBe energetic, knowledgeable, supportive. Give specific actionable advice. Keep responses concise (2-4 paragraphs max). Use emojis sparingly.`
+      `You are Coach Atlas, an expert AI fitness coach. You provide personalized advice based on the user's profile: ${getUserContext()}`
     );
-    loadDiv.remove();
-    addMsg('ai', reply.replace(/\n/g, '<br>'));
-    chatHistory.push({ role: 'assistant', content: reply });
-    if (chatHistory.length > 20) chatHistory = chatHistory.slice(-20);
+    chatHistory.push({ role: 'assistant', content: response });
+    addMessage('Coach Atlas', response, 'ai');
   } catch(e) {
-    loadDiv.remove();
-    addMsg('ai', 'Sorry, connection error: ' + e.message + '. Please try again.');
+    addMessage('Coach Atlas', 'Sorry, I had trouble responding. Try again: ' + e.message, 'ai');
   }
-  btn.disabled = false;
+  
+  sendBtn.disabled = false;
+  sendBtn.textContent = 'Send';
 }
 
 function clearChat() {
@@ -1054,110 +1058,134 @@ function clearChat() {
 }
 
 // NUTRITION
-function switchTab(tabId, el) {
-  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-  el.classList.add('active');
-  ['nut-plan','nut-macros','nut-advice'].forEach(id => {
-    document.getElementById(id).style.display = id === tabId ? 'block' : 'none';
-  });
-}
-
 async function generateMealPlan() {
   const diet = document.getElementById('nut-diet').value;
   const cals = document.getElementById('nut-cals').value;
-  const btn = event.target;
-  btn.disabled = true;
-  btn.innerHTML = '<span class="loader"><span></span><span></span><span></span></span> Creating…';
   try {
     const plan = await callAI(
-      [{ role: 'user', content: `Create a full 1-day meal plan.\nDiet: ${diet}\nCalorie target: ${cals} kcal\n${getUserContext()}\n\nInclude breakfast, lunch, dinner, snacks with portions and macros.` }],
-      'You are a registered nutritionist. Create practical, delicious meal plans with exact portions. Use ### for meal headers, include approximate calories and macros per meal.'
+      [{ role: 'user', content: `Create a daily meal plan for a ${diet} diet with ${cals} kcal target.\n\n${getUserContext()}\n\nInclude breakfast, lunch, dinner, snacks with approximate macros.` }],
+      'You are a professional nutritionist. Create detailed, practical meal plans. Use ### for meal headers. Include calorie and macro info.'
     );
     document.getElementById('mealPlanCard').style.display = 'block';
     document.getElementById('mealPlanOutput').innerHTML = formatAI(plan);
   } catch(e) {
-    document.getElementById('mealPlanOutput').textContent = 'Could not generate plan.';
+    document.getElementById('mealPlanOutput').textContent = 'Error: ' + e.message;
     document.getElementById('mealPlanCard').style.display = 'block';
   }
-  btn.disabled = false;
-  btn.innerHTML = '🥗 Generate AI Meal Plan';
 }
 
 function calculateMacros() {
-  if (!user.weight) return;
-  const protein = Math.round(user.weight * (user.goals.includes('muscle_gain') ? 2.2 : 1.8));
-  const cals = 2000;
-  const fats = Math.round(cals * 0.25 / 9);
-  const carbs = Math.round((cals - protein*4 - fats*9) / 4);
-  document.getElementById('mac-protein').textContent = protein;
-  document.getElementById('mac-carbs').textContent = carbs;
-  document.getElementById('mac-fats').textContent = fats;
-  document.getElementById('macroNote').innerHTML = `Based on your weight (${user.weight}kg) and goals (${user.goals.join(', ')}). Adjust based on your actual calorie target.`;
+  const tdee = user.weight * 1.55 * 24; // Rough TDEE calculation
+  document.getElementById('mac-protein').textContent = Math.round(user.weight * 2.2);
+  document.getElementById('mac-carbs').textContent = Math.round(tdee * 0.45 / 4);
+  document.getElementById('mac-fats').textContent = Math.round(tdee * 0.25 / 9);
+  document.getElementById('macroNote').textContent = 'Based on your profile. Adjust as needed.';
 }
 
 async function askNutrition() {
   const q = document.getElementById('nutQuestion').value.trim();
   if (!q) return;
-  const out = document.getElementById('nutAdviceOut');
-  out.innerHTML = '<span class="loader"><span></span><span></span><span></span></span>';
+  
   try {
-    const ans = await callAI(
-      [{ role: 'user', content: `${q}\n\n${getUserContext()}` }],
-      'You are a certified nutritionist and sports dietitian. Give practical, science-backed nutrition advice. Be specific and actionable.'
+    const advice = await callAI(
+      [{ role: 'user', content: `Question: ${q}\n\n${getUserContext()}` }],
+      'You are a professional nutritionist. Give practical, evidence-based advice tailored to the user.'
     );
-    out.innerHTML = formatAI(ans);
+    document.getElementById('nutAdviceOut').innerHTML = formatAI(advice);
   } catch(e) {
-    out.textContent = 'Could not get advice.';
+    document.getElementById('nutAdviceOut').textContent = 'Error: ' + e.message;
   }
 }
 
 // PROGRESS
 function logWorkout() {
   const type = document.getElementById('log-type').value;
-  const dur = +document.getElementById('log-dur').value || 45;
-  const intensity = +document.getElementById('log-intensity').value || 7;
+  const dur = document.getElementById('log-dur').value;
+  const intensity = document.getElementById('log-intensity').value;
   const notes = document.getElementById('log-notes').value;
-  const log = { date: new Date().toISOString(), type, duration: dur, intensity, notes };
-  workoutLogs.unshift(log);
-  streakDays++;
-  renderLogs();
+  
+  if (!dur || !intensity) {
+    alert('Please fill in duration and intensity!');
+    return;
+  }
+  
+  const log = {
+    date: new Date().toISOString(),
+    type, duration: +dur, intensity: +intensity, notes
+  };
+  workoutLogs.push(log);
+  
+  const logDiv = document.getElementById('workoutLog');
+  if (logDiv.children[0].textContent.includes('No workouts')) {
+    logDiv.innerHTML = '';
+  }
+  
+  const entry = document.createElement('div');
+  entry.style.cssText = 'padding:12px;background:var(--surface2);border-radius:var(--radius-sm);border:1px solid var(--border)';
+  entry.innerHTML = `
+    <div style="display:flex;justify-content:space-between;margin-bottom:6px">
+      <strong>${type}</strong>
+      <span style="color:var(--lime)">${dur} min</span>
+    </div>
+    <div style="font-size:12px;color:var(--muted)">Intensity: ${intensity}/10 ${notes ? '• ' + notes : ''}</div>
+  `;
+  logDiv.insertBefore(entry, logDiv.firstChild);
+  
   updateStats();
   document.getElementById('log-dur').value = '';
   document.getElementById('log-intensity').value = '';
   document.getElementById('log-notes').value = '';
-}
-
-function renderLogs() {
-  const container = document.getElementById('workoutLog');
-  if (!workoutLogs.length) { container.innerHTML = '<div style="color:var(--muted);font-size:14px;text-align:center;padding:24px">No workouts yet.</div>'; return; }
-  container.innerHTML = workoutLogs.map(l => `
-    <div class="exercise-item">
-      <div class="exercise-num">${l.intensity || '—'}</div>
-      <div style="flex:1">
-        <div class="exercise-name">${l.type}</div>
-        <div class="exercise-meta">${new Date(l.date).toLocaleDateString()} • ${l.duration} min ${l.notes ? '• ' + l.notes : ''}</div>
-      </div>
-      <div style="font-size:12px;color:var(--lime)">+${Math.round(l.duration * l.intensity * 0.8)} kcal</div>
-    </div>`).join('');
+  alert('Workout logged! 🎉');
 }
 
 async function analyzeProgress() {
-  if (!workoutLogs.length) { document.getElementById('progressAnalysis').textContent = 'Log some workouts first!'; return; }
-  const out = document.getElementById('progressAnalysis');
-  out.innerHTML = '<span class="loader"><span></span><span></span><span></span></span>';
-  const summary = workoutLogs.slice(0,10).map(l => `${l.date.slice(0,10)}: ${l.type}, ${l.duration}min, intensity ${l.intensity}`).join('\n');
+  if (!workoutLogs.length) {
+    document.getElementById('progressAnalysis').innerHTML = '<div style="color:var(--muted)">Log some workouts first to see analysis!</div>';
+    return;
+  }
+  
+  const summary = `Total: ${workoutLogs.length} workouts, ${workoutLogs.reduce((s,l) => s + (+l.duration||0), 0)} minutes. Latest: ${workoutLogs[workoutLogs.length-1].type}`;
+  
   try {
-    const ans = await callAI(
-      [{ role: 'user', content: `Analyze my recent workout logs and give personalized feedback:\n${summary}\n\n${getUserContext()}` }],
-      'You are an expert fitness coach. Analyze workout patterns, identify strengths, weaknesses, and give specific recommendations for improvement.'
+    const analysis = await callAI(
+      [{ role: 'user', content: `Analyze my progress: ${summary}\n\n${getUserContext()}\n\nProvide insights and recommendations.` }],
+      'You are a fitness coach. Analyze progress and give motivating, actionable feedback.'
     );
-    out.innerHTML = formatAI(ans);
+    document.getElementById('progressAnalysis').innerHTML = formatAI(analysis);
   } catch(e) {
-    out.textContent = 'Analysis failed.';
+    document.getElementById('progressAnalysis').textContent = 'Error: ' + e.message;
   }
 }
 
-// PROFILE
+// UI HELPERS
+function showPage(pageName, navItem) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  
+  document.getElementById(`page-${pageName}`).classList.add('active');
+  navItem.classList.add('active');
+  
+  const titles = {
+    dashboard: 'DASHBOARD',
+    workout: 'WORKOUT PLAN',
+    coach: 'AI COACH',
+    nutrition: 'NUTRITION',
+    progress: 'PROGRESS',
+    profile: 'PROFILE'
+  };
+  document.getElementById('pageTitle').textContent = titles[pageName] || 'PAGE';
+}
+
+function switchTab(tabId, tabEl) {
+  document.querySelectorAll('[id^="nut-"]').forEach(el => {
+    if (el.classList && el.classList.contains('tab')) return;
+    el.style.display = 'none';
+  });
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.getElementById(tabId).style.display = 'block';
+  tabEl.classList.add('active');
+}
+
 function fillProfileForm() {
   document.getElementById('prof-name').value = user.name;
   document.getElementById('prof-age').value = user.age;
@@ -1165,9 +1193,11 @@ function fillProfileForm() {
   document.getElementById('prof-height').value = user.height;
   document.getElementById('prof-level').value = user.level;
   document.getElementById('prof-equipment').value = user.equipment;
-  document.getElementById('profileName').textContent = user.name.toUpperCase();
-  document.getElementById('profileSubtitle').textContent = `${user.level} • ${user.height}cm • ${user.weight}kg`;
+  
   document.getElementById('profileAvatar').textContent = user.name[0].toUpperCase();
+  document.getElementById('profileName').textContent = user.name;
+  const bmi = user.weight / ((user.height/100)**2);
+  document.getElementById('profileSubtitle').textContent = `${user.level} • BMI ${bmi.toFixed(1)}`;
 }
 
 function saveProfile() {
@@ -1177,21 +1207,11 @@ function saveProfile() {
   user.height = +document.getElementById('prof-height').value;
   user.level = document.getElementById('prof-level').value;
   user.equipment = document.getElementById('prof-equipment').value;
-  updateSidebar(); updateStats(); calculateMacros(); fillProfileForm();
-  alert('Profile saved!');
-}
-
-// NAVIGATION
-const pageTitles = {
-  dashboard: 'Dashboard', workout: 'Workout Plan',
-  coach: 'AI Coach', nutrition: 'Nutrition', progress: 'Progress', profile: 'Profile'
-};
-function showPage(id, el) {
-  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-  document.getElementById('page-' + id).classList.add('active');
-  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
-  if (el) el.classList.add('active');
-  document.getElementById('pageTitle').textContent = pageTitles[id]?.toUpperCase() || id.toUpperCase();
+  
+  updateSidebar();
+  updateStats();
+  calculateMacros();
+  alert('Profile updated! ✅');
 }
 </script>
 </body>
