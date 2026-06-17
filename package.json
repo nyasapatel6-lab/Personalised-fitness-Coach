@@ -1,19 +1,24 @@
 {
   "name": "fitai-coach",
   "version": "1.0.0",
-  "description": "Personalized Fitness Coach with AI",
-  "main": "server.js",
+  "description": "Personalized AI Fitness Coach",
+  "main": "api/groq-proxy.js",
+  "type": "module",
   "scripts": {
-    "start": "node server.js",
-    "dev": "node server.js"
+    "dev": "node --watch api/groq-proxy.js",
+    "start": "node api/groq-proxy.js",
+    "deploy": "vercel"
   },
-  "keywords": ["fitness", "ai", "coach"],
-  "author": "",
-  "license": "MIT",
   "dependencies": {
-    "express": "^4.18.2",
-    "cors": "^2.8.5",
-    "dotenv": "^16.3.1"
+    "node-fetch": "^3.3.2"
   },
-  "devDependencies": {}
+  "devDependencies": {},
+  "keywords": [
+    "fitness",
+    "ai",
+    "coach",
+    "groq"
+  ],
+  "author": "Nyasa Patel",
+  "license": "MIT"
 }
